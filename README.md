@@ -96,3 +96,38 @@ Proto.Actor.dll에서 RootContext를 포함하는 모든 타입을 나열해줘
 
 MIT
 
+## GitHub Packages 배포 방법
+
+### 자동 배포
+
+GitHub에서 Release를 생성하면 자동으로 GitHub Packages에 배포됩니다:
+
+1. GitHub 저장소에서 **Releases** 클릭
+2. **Draft a new release** 클릭
+3. 태그 생성: `v1.0.0` (버전 번호 입력)
+4. Release 제목과 설명 작성
+5. **Publish release** 클릭
+
+Release가 publish되면 자동으로 GitHub Actions가 실행되어 패키지가 배포됩니다.
+
+### GitHub Packages에서 패키지 설치
+
+```powershell
+# nuget.config에 GitHub Packages 소스 추가
+dotnet nuget add source "https://nuget.pkg.github.com/seungyongshim/index.json" --name github --username USERNAME --password GITHUB_PAT
+
+# 패키지 설치
+dotnet add package ReflectionMcpServer
+```
+
+**참고**: GitHub PAT(Personal Access Token)이 필요합니다:
+- Settings → Developer settings → Personal access tokens → Tokens (classic)
+- `read:packages` 권한 필요
+
+### 로컬에서 패키지 생성
+
+```powershell
+cd src
+dotnet pack --configuration Release --output ../artifacts
+```
+
