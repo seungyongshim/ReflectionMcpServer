@@ -7,8 +7,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="ModelContextProtocol.NET.Server" Version="0.3.3-alpha" />
-    <PackageReference Include="System.Text.Json" Version="9.0.0" />
+    <PackageReference Include="ModelContextProtocol" Version="0.4.0-preview.3" />
   </ItemGroup>
 
 </Project>

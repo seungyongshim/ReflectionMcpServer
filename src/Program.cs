@@ -1,64 +1,134 @@
 using System.Reflection;
 using System.Text;
-using System.Text.Json;
 using System.Text.Json.Serialization;
-using ModelContextProtocol.NET;
-using ModelContextProtocol.NET.Server;
+using ModelContextProtocol;
 
 // MCP Server for .NET reflection queries
-var serverInfo = new Implementation 
-{ 
-    Name = "Reflection MCP Server", 
-    Version = "1.0.0" 
-};
-
-var builder = new McpServerBuilder(serverInfo).AddStdioTransport();
+var server = new MCPServer(new ServerOptions(
+    serverInfo: new()
+    {
+        Name = "reflection-mcp-server",
+        Version = "1.0.0"
+    },
+    capabilities: new()
+    {
+        Tools = new()
+    }
+));
 
 // Add reflection tools
-builder.Tools.AddFunction(
-    name: "get_method_signature",
-    description: "Get method signature, parameters, and return type from a .NET assembly",
-    parameterTypeInfo: ReflectionJsonContext.Default.GetMethodSignatureParams,
-    handler: GetMethodSignature
-);
+server.AddTool("get_method_signature", 
+    "Get method signature, parameters, and return type from a .NET assembly",
+    new
+    {
+        type = "object",
+        properties = new
+        {
+            assembly_path = new
+            {
+                type = "string",
+                description = "Path to the .NET assembly file"
+            },
+            method_name = new
+            {
+                type = "string",
+                description = "Name of the method to search for"
+            },
+            type_name = new
+            {
+                type = "string",
+                description = "Optional: Full name of the type containing the method"
+            }
+        },
+        required = new[] { "assembly_path", "method_name" }
+    },
+    async (arguments) =>
+    {
+        var assemblyPath = arguments["assembly_path"]?.ToString() ?? "";
+        var methodName = arguments["method_name"]?.ToString() ?? "";
+        var typeName = arguments.ContainsKey("type_name") ? arguments["type_name"]?.ToString() : null;
+        
+        return await Task.FromResult(GetMethodSignature(assemblyPath, methodName, typeName));
+    });
 
-builder.Tools.AddFunction(
-    name: "get_type_info",
-    description: "Get detailed type information including methods, properties, and interfaces",
-    parameterTypeInfo: ReflectionJsonContext.Default.GetTypeInfoParams,
-    handler: GetTypeInfo
-);
+server.AddTool("get_type_info", 
+    "Get detailed type information including methods, properties, and interfaces",
+    new
+    {
+        type = "object",
+        properties = new
+        {
+            assembly_path = new
+            {
+                type = "string",
+                description = "Path to the .NET assembly file"
+            },
+            type_name = new
+            {
+                type = "string",
+                description = "Full name of the type to inspect"
+            }
+        },
+        required = new[] { "assembly_path", "type_name" }
+    },
+    async (arguments) =>
+    {
+        var assemblyPath = arguments["assembly_path"]?.ToString() ?? "";
+        var typeName = arguments["type_name"]?.ToString() ?? "";
+        
+        return await Task.FromResult(GetTypeInfo(assemblyPath, typeName));
+    });
 
-builder.Tools.AddFunction(
-    name: "list_types",
-    description: "List all types in a .NET assembly with optional filtering",
-    parameterTypeInfo: ReflectionJsonContext.Default.ListTypesParams,
-    handler: ListTypes
-);
+server.AddTool("list_types", 
+    "List all types in a .NET assembly with optional filtering",
+    new
+    {
+        type = "object",
+        properties = new
+        {
+            assembly_path = new
+            {
+                type = "string",
+                description = "Path to the .NET assembly file"
+            },
+            filter = new
+            {
+                type = "string",
+                description = "Optional: Filter types by name (case-insensitive)"
+            }
+        },
+        required = new[] { "assembly_path" }
+    },
+    async (arguments) =>
+    {
+        var assemblyPath = arguments["assembly_path"]?.ToString() ?? "";
+        var filter = arguments.ContainsKey("filter") ? arguments["filter"]?.ToString() : null;
+        
+        return await Task.FromResult(ListTypes(assemblyPath, filter));
+    });
 
-var server = builder.Build();
-server.Start();
-await Task.Delay(-1); // Wait indefinitely
+// Start server with stdio transport
+await server.ConnectToStdioAsync();
 
 // Tool handler methods
-static TextContent GetMethodSignature(GetMethodSignatureParams parameters, CancellationToken ct)
+static string GetMethodSignature(string assemblyPath, string methodName, string? typeName)
 {
     try
     {
-        var assembly = Assembly.LoadFrom(parameters.AssemblyPath);
+        var assembly = Assembly.LoadFrom(assemblyPath);
         var result = new StringBuilder();
 
         result.AppendLine($"Assembly: {assembly.GetName().Name} v{assembly.GetName().Version}");
-        result.AppendLine($"Searching for method: {parameters.MethodName}");
-        if (!string.IsNullOrEmpty(parameters.TypeName))
+        result.AppendLine($"Searching for method: {methodName}");
+        if (!string.IsNullOrEmpty(typeName))
         {
-            result.AppendLine($"In type: {parameters.TypeName}");
+            result.AppendLine($"In type: {typeName}");
         }
         result.AppendLine();
 
-        var types = string.IsNullOrEmpty(parameters.TypeName)
+        var types = string.IsNullOrEmpty(typeName)
             ? assembly.GetTypes()
-            : [assembly.GetType(parameters.TypeName) ?? throw new TypeLoadException($"Type {parameters.TypeName} not found")];
+            : [assembly.GetType(typeName) ?? throw new TypeLoadException($"Type {typeName} not found")];
 
         var foundAny = false;
 
@@ -70,7 +140,7 @@ static TextContent GetMethodSignature(GetMethodSignatureParams parameters, Cance
             }
 
             var methods = type.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance)
-                .Where(m => m.Name == parameters.MethodName);
+                .Where(m => m.Name == methodName);
 
             foreach (var method in methods)
             {
@@ -94,24 +164,24 @@ static TextContent GetMethodSignature(GetMethodSignatureParams parameters, Cance
 
         if (!foundAny)
         {
-            result.AppendLine($"✗ No method named '{parameters.MethodName}' found.");
+            result.AppendLine($"✗ No method named '{methodName}' found.");
         }
 
-        return new TextContent { Text = result.ToString() };
+        return result.ToString();
     }
     catch (Exception ex)
     {
-        return new TextContent { Text = $"Error: {ex.Message}" };
+        return $"Error: {ex.Message}";
     }
 }
 
-static TextContent GetTypeInfo(GetTypeInfoParams parameters, CancellationToken ct)
+static string GetTypeInfo(string assemblyPath, string typeName)
 {
     try
     {
-        var assembly = Assembly.LoadFrom(parameters.AssemblyPath);
-        var type = assembly.GetType(parameters.TypeName)
-            ?? throw new TypeLoadException($"Type {parameters.TypeName} not found");
+        var assembly = Assembly.LoadFrom(assemblyPath);
+        var type = assembly.GetType(typeName)
+            ?? throw new TypeLoadException($"Type {typeName} not found");
 
         var result = new StringBuilder();
 
@@ -166,21 +236,21 @@ static TextContent GetTypeInfo(GetTypeInfoParams parameters, CancellationToken c
             }
         }
 
-        return new TextContent { Text = result.ToString() };
+        return result.ToString();
     }
     catch (Exception ex)
     {
-        return new TextContent { Text = $"Error: {ex.Message}" };
+        return $"Error: {ex.Message}";
     }
 }
 
-static TextContent ListTypes(ListTypesParams parameters, CancellationToken ct)
+static string ListTypes(string assemblyPath, string? filter)
 {
     try
     {
-        var assembly = Assembly.LoadFrom(parameters.AssemblyPath);
+        var assembly = Assembly.LoadFrom(assemblyPath);
         var types = assembly.GetTypes()
-            .Where(t => string.IsNullOrEmpty(parameters.Filter) || (t.FullName?.Contains(parameters.Filter, StringComparison.OrdinalIgnoreCase) ?? false))
+            .Where(t => string.IsNullOrEmpty(filter) || (t.FullName?.Contains(filter, StringComparison.OrdinalIgnoreCase) ?? false))
             .OrderBy(t => t.FullName);
 
         var result = new StringBuilder();
@@ -194,11 +264,11 @@ static TextContent ListTypes(ListTypesParams parameters, CancellationToken ct)
             result.AppendLine($"  {kind,-10} {type.FullName}");
         }
 
-        return new TextContent { Text = result.ToString() };
+        return result.ToString();
     }
     catch (Exception ex)
     {
-        return new TextContent { Text = $"Error: {ex.Message}" };
+        return $"Error: {ex.Message}";
     }
 }
 
@@ -237,30 +307,4 @@ static string GetModifiers(MethodInfo method)
     }
 
     return string.Join(" ", modifiers);
-}
-
-// Parameter classes for MCP tools
-public record GetMethodSignatureParams(
-    [property: JsonPropertyName("assembly_path")] string AssemblyPath,
-    [property: JsonPropertyName("method_name")] string MethodName,
-    [property: JsonPropertyName("type_name")] string? TypeName = null
-);
-
-public record GetTypeInfoParams(
-    [property: JsonPropertyName("assembly_path")] string AssemblyPath,
-    [property: JsonPropertyName("type_name")] string TypeName
-);
-
-public record ListTypesParams(
-    [property: JsonPropertyName("assembly_path")] string AssemblyPath,
-    [property: JsonPropertyName("filter")] string? Filter = null
-);
-
-// JSON serialization context for NativeAOT compatibility
-[JsonSourceGenerationOptions(WriteIndented = false)]
-[JsonSerializable(typeof(GetMethodSignatureParams))]
-[JsonSerializable(typeof(GetTypeInfoParams))]
-[JsonSerializable(typeof(ListTypesParams))]
-internal partial class ReflectionJsonContext : JsonSerializerContext
-{
 }
