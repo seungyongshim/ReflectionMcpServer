@@ -28,7 +28,7 @@ await builder.Build().RunAsync();
 [McpServerToolType]
 public static class ReflectionTools
 {
-    [McpServerTool(Name = "get_method_signature"), Description("Get method signature, parameters, and return type from a .NET assembly")]
+    [McpServerTool(Name = "get_method_signature"), Description("Get method signature, parameters, and return type from a .NET assembly. Useful for inspecting NuGet library DLLs, analyzing API methods, understanding method overloads, and examining compiled assemblies. Searches for methods by name and returns detailed signature information including modifiers, parameters with default values, and return types.")]
     public static string GetMethodSignature(
         [Description("Path to the .NET assembly file")] string assemblyPath,
         [Description("Name of the method to search for")] string methodName,
@@ -96,7 +96,7 @@ public static class ReflectionTools
         }
     }
 
-    [McpServerTool(Name = "get_type_info"), Description("Get detailed type information including methods, properties, and interfaces")]
+    [McpServerTool(Name = "get_type_info"), Description("Get comprehensive type information from a .NET assembly including all methods, properties, interfaces, base types, and type characteristics. Essential for exploring NuGet package classes, understanding inheritance hierarchies, discovering available APIs, and examining type structure in compiled C# libraries.")]
     public static string GetTypeInfo(
         [Description("Path to the .NET assembly file")] string assemblyPath,
         [Description("Full name of the type to inspect")] string typeName)
@@ -168,7 +168,7 @@ public static class ReflectionTools
         }
     }
 
-    [McpServerTool(Name = "list_types"), Description("List all types in a .NET assembly with optional filtering")]
+    [McpServerTool(Name = "list_types"), Description("List and discover all types (classes, interfaces, enums, structs) in a .NET assembly with optional name filtering. Perfect for exploring NuGet package contents, finding available types in compiled DLLs, browsing .NET library APIs, and getting an overview of assembly structure. Case-insensitive filtering helps narrow down search results.")]
     public static string ListTypes(
         [Description("Path to the .NET assembly file")] string assemblyPath,
         [Description("Optional: Filter types by name (case-insensitive)")] string? filter = null)
