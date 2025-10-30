@@ -30,7 +30,30 @@
 - `assembly_path` (필수): .NET 어셈블리 파일 경로
 - `filter` (선택): 타입 이름 필터 (대소문자 구분 안함)
 
-## 설치 및 빌드
+## 설치 및 사용
+
+### 방법 1: dnx로 바로 실행 (.NET 10+)
+
+.NET 10 이상에서는 `dnx` 명령어로 설치 없이 바로 실행할 수 있습니다:
+
+```powershell
+dnx ReflectionMcpServer
+```
+
+또는 특정 버전을 지정:
+
+```powershell
+dnx ReflectionMcpServer@1.0.0
+```
+
+### 방법 2: 전역 도구로 설치
+
+```powershell
+dotnet tool install -g ReflectionMcpServer
+reflection-mcp
+```
+
+### 방법 3: 로컬 빌드 및 실행
 
 ```powershell
 cd z:\2025\ReflectionMcpServer
@@ -38,6 +61,33 @@ dotnet build
 ```
 
 ## Claude Desktop 설정
+
+### 방법 1: dnx 사용 (.NET 10+)
+
+```json
+{
+  "mcpServers": {
+    "reflection": {
+      "command": "dnx",
+      "args": ["ReflectionMcpServer", "--yes"]
+    }
+  }
+}
+```
+
+### 방법 2: 전역 도구 사용
+
+```json
+{
+  "mcpServers": {
+    "reflection": {
+      "command": "reflection-mcp"
+    }
+  }
+}
+```
+
+### 방법 3: 로컬 빌드 사용
 
 Claude Desktop의 설정 파일에 다음을 추가하세요:
 
