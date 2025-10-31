@@ -440,13 +440,47 @@ public static class RoslynTools
                     {
                         kind = $"{namedType.TypeKind}";
                     }
+                    else if (symbol is IMethodSymbol methodSymbol)
+                    {
+                        if (methodSymbol.IsExtensionMethod)
+                        {
+                            kind = "ExtensionMethod";
+                        }
+                        else if (methodSymbol.MethodKind == MethodKind.Constructor)
+                        {
+                            kind = "Constructor";
+                        }
+                        else
+                        {
+                            kind = "Method";
+                        }
+                    }
                     
                     result.AppendLine($"      - kind: {kind}");
                     result.AppendLine($"        name: {symbol.ToDisplayString()}");
                     
-                    if (symbol is IMethodSymbol method && method.Parameters.Any())
+                    if (symbol is IMethodSymbol method)
                     {
-                        result.AppendLine($"        params: [{string.Join(", ", method.Parameters.Select(p => $"{p.Type} {p.Name}"))}]");
+                        if (method.IsExtensionMethod && method.Parameters.Any())
+                        {
+                            // For extension methods, show the extended type separately
+                            var extendedType = method.Parameters[0].Type;
+                            var otherParams = method.Parameters.Skip(1);
+                            result.AppendLine($"        extends: {extendedType}");
+                            if (otherParams.Any())
+                            {
+                                result.AppendLine($"        params: [{string.Join(", ", otherParams.Select(p => $"{p.Type} {p.Name}"))}]");
+                            }
+                        }
+                        else if (method.Parameters.Any())
+                        {
+                            result.AppendLine($"        params: [{string.Join(", ", method.Parameters.Select(p => $"{p.Type} {p.Name}"))}]");
+                        }
+                        
+                        if (method.MethodKind != MethodKind.Constructor)
+                        {
+                            result.AppendLine($"        returnType: {method.ReturnType}");
+                        }
                     }
                     else if (symbol is INamedTypeSymbol type)
                     {
@@ -504,22 +538,18 @@ public class SymbolVisitor : SymbolVisitor<object?>
                 FoundSymbols.Add(symbol);
             }
             
-            // If type name matches, include all its public members
-            // This handles cases like searching "CSharpSyntaxTree" to find ParseText, Create, etc.
+            // If type name matches, include all its public members including constructors
             foreach (var member in symbol.GetMembers())
             {
-                // Skip constructors (same name as type, would be duplicate)
-                if (member.Kind == SymbolKind.Method && member is IMethodSymbol methodSym)
-                {
-                    if (methodSym.MethodKind == MethodKind.Constructor || 
-                        methodSym.MethodKind == MethodKind.StaticConstructor)
-                        continue;
-                }
-                
                 // Only include public/protected members
                 if (member.DeclaredAccessibility == Accessibility.Public || 
                     member.DeclaredAccessibility == Accessibility.Protected)
                 {
+                    // Skip static constructors
+                    if (member is IMethodSymbol methodSym && 
+                        methodSym.MethodKind == MethodKind.StaticConstructor)
+                        continue;
+                    
                     if (_visited.Add(member))
                     {
                         FoundSymbols.Add(member);
