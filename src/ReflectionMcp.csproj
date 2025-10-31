@@ -14,8 +14,8 @@
     <Version>1.0.0</Version>
     <Authors>seungyongshim</Authors>
     <Company>seungyongshim</Company>
-    <Description>.NET Reflection MCP Server - Analyze .NET assemblies using Model Context Protocol</Description>
-    <PackageTags>mcp;model-context-protocol;reflection;dotnet;assembly-analysis;dotnet-tool</PackageTags>
+    <Description>C# LSP MCP Server - Analyze C# source code using Language Server Protocol and Model Context Protocol</Description>
+    <PackageTags>mcp;model-context-protocol;lsp;language-server-protocol;csharp;roslyn;dotnet-tool</PackageTags>
     <PackageProjectUrl>https://github.com/seungyongshim/ReflectionMcpServer</PackageProjectUrl>
     <RepositoryUrl>https://github.com/seungyongshim/ReflectionMcpServer</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
@@ -35,6 +35,7 @@
     <PackageReference Include="ModelContextProtocol" Version="0.4.0-preview.3" />
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="9.0.0" />
     <PackageReference Include="Microsoft.SourceLink.GitHub" Version="8.0.0" PrivateAssets="All" />
+    <PackageReference Include="StreamJsonRpc" Version="2.19.27" />
   </ItemGroup>
 
 </Project>

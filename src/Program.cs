@@ -1,13 +1,17 @@
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
+using System.Diagnostics;
+using System.IO;
 using System.Linq;
-using System.Reflection;
 using System.Text;
+using System.Text.Json;
+using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using ModelContextProtocol.Server;
+using StreamJsonRpc;
 
 var builder = Host.CreateApplicationBuilder(args);
 
@@ -22,217 +26,358 @@ builder.Services
     .WithStdioServerTransport()
     .WithToolsFromAssembly();
 
+builder.Services.AddSingleton<LspClientManager>();
+
 await builder.Build().RunAsync();
+
+// LSP Client Manager
+public class LspClientManager : IDisposable
+{
+    private Process? _lspProcess;
+    private JsonRpc? _jsonRpc;
+    private bool _isInitialized = false;
+
+    public async Task<JsonRpc> GetOrCreateLspClient()
+    {
+        if (_jsonRpc != null && _isInitialized)
+        {
+            return _jsonRpc;
+        }
+
+        // Find C# extension path
+        var csharpExtPath = FindCSharpExtension();
+        if (string.IsNullOrEmpty(csharpExtPath))
+        {
+            throw new Exception("C# Dev Kit extension not found. Please install it in VS Code.");
+        }
+
+        // Start Roslyn language server
+        var serverPath = Path.Combine(csharpExtPath, "roslyn", "Microsoft.CodeAnalysis.LanguageServer.dll");
+        if (!File.Exists(serverPath))
+        {
+            throw new Exception($"Language server not found at: {serverPath}");
+        }
+
+        _lspProcess = new Process
+        {
+            StartInfo = new ProcessStartInfo
+            {
+                FileName = "dotnet",
+                Arguments = $"\"{serverPath}\"",
+                RedirectStandardInput = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            }
+        };
+
+        _lspProcess.Start();
+
+        _jsonRpc = JsonRpc.Attach(_lspProcess.StandardInput.BaseStream, _lspProcess.StandardOutput.BaseStream);
+
+        // Initialize LSP
+        await InitializeLsp();
+
+        return _jsonRpc;
+    }
+
+    private async Task InitializeLsp()
+    {
+        var initParams = new
+        {
+            processId = Environment.ProcessId,
+            clientInfo = new { name = "ReflectionMcpServer", version = "1.0.0" },
+            capabilities = new
+            {
+                textDocument = new
+                {
+                    hover = new { contentFormat = new[] { "markdown", "plaintext" } },
+                    definition = new { linkSupport = true },
+                    references = new { },
+                    documentSymbol = new { },
+                    completion = new { }
+                },
+                workspace = new
+                {
+                    symbol = new { },
+                    workspaceFolders = true
+                }
+            },
+            workspaceFolders = new object[] { }
+        };
+
+        var result = await _jsonRpc!.InvokeAsync<object>("initialize", initParams);
+        await _jsonRpc.NotifyAsync("initialized", new { });
+        _isInitialized = true;
+    }
+
+    private string? FindCSharpExtension()
+    {
+        var userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        var vscodeExtPath = Path.Combine(userProfile, ".vscode", "extensions");
+
+        if (!Directory.Exists(vscodeExtPath))
+        {
+            return null;
+        }
+
+        var csharpDirs = Directory.GetDirectories(vscodeExtPath, "ms-dotnettools.csharp-*")
+            .OrderByDescending(d => d)
+            .FirstOrDefault();
+
+        return csharpDirs;
+    }
+
+    public void Dispose()
+    {
+        _jsonRpc?.Dispose();
+        _lspProcess?.Kill();
+        _lspProcess?.Dispose();
+    }
+}
 
 // Tool implementations
 [McpServerToolType]
-public static class ReflectionTools
+public static class LspTools
 {
-    [McpServerTool(Name = "get_method_signature"), Description("Get method signature, parameters, and return type from a .NET assembly. Useful for inspecting NuGet library DLLs, analyzing API methods, understanding method overloads, and examining compiled assemblies. Searches for methods by name and returns detailed signature information including modifiers, parameters with default values, and return types.")]
-    public static string GetMethodSignature(
-        [Description("Path to the .NET assembly file")] string assemblyPath,
-        [Description("Name of the method to search for")] string methodName,
-        [Description("Optional: Full name of the type containing the method")] string? typeName = null)
+    private static LspClientManager? _lspManager;
+
+    public static void SetLspManager(LspClientManager manager)
+    {
+        _lspManager = manager;
+    }
+    [McpServerTool(Name = "get_symbol_info"), Description("Get detailed symbol information (class, method, property, etc.) from C# source code using LSP. Provides type information, documentation, signatures, and member details by communicating with C# Dev Kit language server.")]
+    public static async Task<string> GetSymbolInfo(
+        [Description("Path to the C# source file")] string filePath,
+        [Description("Symbol name to search for (class, method, property, etc.)")] string symbolName)
     {
         try
         {
-            var assembly = Assembly.LoadFrom(assemblyPath);
+            if (_lspManager == null)
+            {
+                return "Error: LSP Manager not initialized";
+            }
+
+            var lsp = await _lspManager.GetOrCreateLspClient();
             var result = new StringBuilder();
 
-            result.AppendLine($"Assembly: {assembly.GetName().Name} v{assembly.GetName().Version}");
-            result.AppendLine($"Searching for method: {methodName}");
-            if (!string.IsNullOrEmpty(typeName))
+            // Open document
+            var fileUri = new Uri(filePath).ToString();
+            var text = await File.ReadAllTextAsync(filePath);
+
+            await lsp.NotifyAsync("textDocument/didOpen", new
             {
-                result.AppendLine($"In type: {typeName}");
-            }
+                textDocument = new
+                {
+                    uri = fileUri,
+                    languageId = "csharp",
+                    version = 1,
+                    text = text
+                }
+            });
+
+            // Get document symbols
+            var symbols = await lsp.InvokeAsync<object[]>("textDocument/documentSymbol", new
+            {
+                textDocument = new { uri = fileUri }
+            });
+
+            result.AppendLine($"File: {filePath}");
+            result.AppendLine($"Searching for: {symbolName}");
             result.AppendLine();
 
-            var types = string.IsNullOrEmpty(typeName)
-                ? assembly.GetTypes()
-                : [assembly.GetType(typeName) ?? throw new TypeLoadException($"Type {typeName} not found")];
-
-            var foundAny = false;
-
-            foreach (var type in types)
+            if (symbols != null && symbols.Length > 0)
             {
-                if (type == null)
-                {
-                    continue;
-                }
-
-                var methods = type.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance)
-                    .Where(m => m.Name == methodName);
-
-                foreach (var method in methods)
-                {
-                    foundAny = true;
-                    result.AppendLine($"╔═══ Found in: {type.FullName}");
-                    result.AppendLine($"║ Modifiers: {GetModifiers(method)}");
-                    result.AppendLine($"║ Signature: {method}");
-                    result.AppendLine($"║ Parameters:");
-
-                    foreach (var param in method.GetParameters())
-                    {
-                        var optional = param.IsOptional ? $" = {param.DefaultValue}" : "";
-                        result.AppendLine($"║   - {param.ParameterType.Name} {param.Name}{optional}");
-                    }
-
-                    result.AppendLine($"║ Return Type: {method.ReturnType.FullName}");
-                    result.AppendLine($"╚═══");
-                    result.AppendLine();
-                }
+                var symbolJson = JsonSerializer.Serialize(symbols, new JsonSerializerOptions { WriteIndented = true });
+                result.AppendLine("Symbols found:");
+                result.AppendLine(symbolJson);
             }
-
-            if (!foundAny)
+            else
             {
-                result.AppendLine($"✗ No method named '{methodName}' found.");
+                result.AppendLine("No symbols found.");
             }
 
             return result.ToString();
         }
         catch (Exception ex)
         {
-            return $"Error: {ex.Message}";
+            return $"Error: {ex.Message}\n{ex.StackTrace}";
         }
     }
 
-    [McpServerTool(Name = "get_type_info"), Description("Get comprehensive type information from a .NET assembly including all methods, properties, interfaces, base types, and type characteristics. Essential for exploring NuGet package classes, understanding inheritance hierarchies, discovering available APIs, and examining type structure in compiled C# libraries.")]
-    public static string GetTypeInfo(
-        [Description("Path to the .NET assembly file")] string assemblyPath,
-        [Description("Full name of the type to inspect")] string typeName)
+    [McpServerTool(Name = "get_hover_info"), Description("Get hover information (documentation, type info) for a symbol at a specific position in C# source code using LSP. Returns the same information that appears when hovering over code in VS Code with C# Dev Kit.")]
+    public static async Task<string> GetHoverInfo(
+        [Description("Path to the C# source file")] string filePath,
+        [Description("Line number (0-based)")] int line,
+        [Description("Character position (0-based)")] int character)
     {
         try
         {
-            var assembly = Assembly.LoadFrom(assemblyPath);
-            var type = assembly.GetType(typeName)
-                ?? throw new TypeLoadException($"Type {typeName} not found");
+            if (_lspManager == null)
+            {
+                return "Error: LSP Manager not initialized";
+            }
+
+            var lsp = await _lspManager.GetOrCreateLspClient();
+            var fileUri = new Uri(filePath).ToString();
+            var text = await File.ReadAllTextAsync(filePath);
+
+            await lsp.NotifyAsync("textDocument/didOpen", new
+            {
+                textDocument = new
+                {
+                    uri = fileUri,
+                    languageId = "csharp",
+                    version = 1,
+                    text = text
+                }
+            });
+
+            var hover = await lsp.InvokeAsync<object>("textDocument/hover", new
+            {
+                textDocument = new { uri = fileUri },
+                position = new { line, character }
+            });
 
             var result = new StringBuilder();
-
-            result.AppendLine($"╔═══ Type Information");
-            result.AppendLine($"║ Full Name: {type.FullName}");
-            result.AppendLine($"║ Namespace: {type.Namespace}");
-            result.AppendLine($"║ Assembly: {type.Assembly.GetName().Name}");
-            result.AppendLine($"║ Is Class: {type.IsClass}");
-            result.AppendLine($"║ Is Interface: {type.IsInterface}");
-            result.AppendLine($"║ Is Abstract: {type.IsAbstract}");
-            result.AppendLine($"║ Is Sealed: {type.IsSealed}");
-            result.AppendLine($"╚═══");
+            result.AppendLine($"File: {filePath}");
+            result.AppendLine($"Position: Line {line}, Character {character}");
             result.AppendLine();
 
-            if (type.BaseType != null)
+            if (hover != null)
             {
-                result.AppendLine($"Base Type: {type.BaseType.FullName}");
-                result.AppendLine();
+                var hoverJson = JsonSerializer.Serialize(hover, new JsonSerializerOptions { WriteIndented = true });
+                result.AppendLine("Hover Information:");
+                result.AppendLine(hoverJson);
             }
-
-            var interfaces = type.GetInterfaces();
-            if (interfaces.Length > 0)
+            else
             {
-                result.AppendLine("Interfaces:");
-                foreach (var iface in interfaces)
-                {
-                    result.AppendLine($"  - {iface.FullName}");
-                }
-                result.AppendLine();
-            }
-
-            var methods = type.GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly);
-            if (methods.Length > 0)
-            {
-                result.AppendLine("Methods:");
-                foreach (var method in methods)
-                {
-                    var modifiers = GetModifiers(method);
-                    var parameters = string.Join(", ", method.GetParameters().Select(p => $"{p.ParameterType.Name} {p.Name}"));
-                    result.AppendLine($"  {modifiers} {method.ReturnType.Name} {method.Name}({parameters})");
-                }
-                result.AppendLine();
-            }
-
-            var properties = type.GetProperties(BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly);
-            if (properties.Length > 0)
-            {
-                result.AppendLine("Properties:");
-                foreach (var prop in properties)
-                {
-                    result.AppendLine($"  {prop.PropertyType.Name} {prop.Name}");
-                }
+                result.AppendLine("No hover information available at this position.");
             }
 
             return result.ToString();
         }
         catch (Exception ex)
         {
-            return $"Error: {ex.Message}";
+            return $"Error: {ex.Message}\n{ex.StackTrace}";
         }
     }
 
-    [McpServerTool(Name = "list_types"), Description("List and discover all types (classes, interfaces, enums, structs) in a .NET assembly with optional name filtering. Perfect for exploring NuGet package contents, finding available types in compiled DLLs, browsing .NET library APIs, and getting an overview of assembly structure. Case-insensitive filtering helps narrow down search results.")]
-    public static string ListTypes(
-        [Description("Path to the .NET assembly file")] string assemblyPath,
-        [Description("Optional: Filter types by name (case-insensitive)")] string? filter = null)
+    [McpServerTool(Name = "find_references"), Description("Find all references to a symbol in C# source code using LSP. Shows where a class, method, property, or variable is used throughout the codebase.")]
+    public static async Task<string> FindReferences(
+        [Description("Path to the C# source file")] string filePath,
+        [Description("Line number where the symbol is defined (0-based)")] int line,
+        [Description("Character position (0-based)")] int character)
     {
         try
         {
-            var assembly = Assembly.LoadFrom(assemblyPath);
-            var types = assembly.GetTypes()
-                .Where(t => string.IsNullOrEmpty(filter) || (t.FullName?.Contains(filter, StringComparison.OrdinalIgnoreCase) ?? false))
-                .OrderBy(t => t.FullName);
+            if (_lspManager == null)
+            {
+                return "Error: LSP Manager not initialized";
+            }
+
+            var lsp = await _lspManager.GetOrCreateLspClient();
+            var fileUri = new Uri(filePath).ToString();
+            var text = await File.ReadAllTextAsync(filePath);
+
+            await lsp.NotifyAsync("textDocument/didOpen", new
+            {
+                textDocument = new
+                {
+                    uri = fileUri,
+                    languageId = "csharp",
+                    version = 1,
+                    text = text
+                }
+            });
+
+            var references = await lsp.InvokeAsync<object[]>("textDocument/references", new
+            {
+                textDocument = new { uri = fileUri },
+                position = new { line, character },
+                context = new { includeDeclaration = true }
+            });
 
             var result = new StringBuilder();
-            result.AppendLine($"Assembly: {assembly.GetName().Name} v{assembly.GetName().Version}");
-            result.AppendLine($"Types found: {types.Count()}");
+            result.AppendLine($"File: {filePath}");
+            result.AppendLine($"Position: Line {line}, Character {character}");
             result.AppendLine();
 
-            foreach (var type in types)
+            if (references != null && references.Length > 0)
             {
-                var kind = type.IsInterface ? "interface" : type.IsClass ? "class" : type.IsEnum ? "enum" : "struct";
-                result.AppendLine($"  {kind,-10} {type.FullName}");
+                result.AppendLine($"Found {references.Length} reference(s):");
+                var refJson = JsonSerializer.Serialize(references, new JsonSerializerOptions { WriteIndented = true });
+                result.AppendLine(refJson);
+            }
+            else
+            {
+                result.AppendLine("No references found.");
             }
 
             return result.ToString();
         }
         catch (Exception ex)
         {
-            return $"Error: {ex.Message}";
+            return $"Error: {ex.Message}\n{ex.StackTrace}";
         }
     }
 
-    private static string GetModifiers(MethodInfo method)
+    [McpServerTool(Name = "go_to_definition"), Description("Go to definition of a symbol in C# source code using LSP. Returns the location where a class, method, property, or variable is defined.")]
+    public static async Task<string> GoToDefinition(
+        [Description("Path to the C# source file")] string filePath,
+        [Description("Line number (0-based)")] int line,
+        [Description("Character position (0-based)")] int character)
     {
-        var modifiers = new List<string>();
+        try
+        {
+            if (_lspManager == null)
+            {
+                return "Error: LSP Manager not initialized";
+            }
 
-        if (method.IsPublic)
-        {
-            modifiers.Add("public");
-        }
-        else if (method.IsPrivate)
-        {
-            modifiers.Add("private");
-        }
-        else if (method.IsFamily)
-        {
-            modifiers.Add("protected");
-        }
-        else if (method.IsAssembly)
-        {
-            modifiers.Add("internal");
-        }
+            var lsp = await _lspManager.GetOrCreateLspClient();
+            var fileUri = new Uri(filePath).ToString();
+            var text = await File.ReadAllTextAsync(filePath);
 
-        if (method.IsStatic)
-        {
-            modifiers.Add("static");
-        }
-        if (method.IsAbstract)
-        {
-            modifiers.Add("abstract");
-        }
-        if (method.IsVirtual && !method.IsAbstract)
-        {
-            modifiers.Add("virtual");
-        }
+            await lsp.NotifyAsync("textDocument/didOpen", new
+            {
+                textDocument = new
+                {
+                    uri = fileUri,
+                    languageId = "csharp",
+                    version = 1,
+                    text = text
+                }
+            });
 
-        return string.Join(" ", modifiers);
+            var definition = await lsp.InvokeAsync<object>("textDocument/definition", new
+            {
+                textDocument = new { uri = fileUri },
+                position = new { line, character }
+            });
+
+            var result = new StringBuilder();
+            result.AppendLine($"File: {filePath}");
+            result.AppendLine($"Position: Line {line}, Character {character}");
+            result.AppendLine();
+
+            if (definition != null)
+            {
+                result.AppendLine("Definition:");
+                var defJson = JsonSerializer.Serialize(definition, new JsonSerializerOptions { WriteIndented = true });
+                result.AppendLine(defJson);
+            }
+            else
+            {
+                result.AppendLine("No definition found.");
+            }
+
+            return result.ToString();
+        }
+        catch (Exception ex)
+        {
+            return $"Error: {ex.Message}\n{ex.StackTrace}";
+        }
     }
 }

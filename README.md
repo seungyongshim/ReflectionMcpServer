@@ -1,34 +1,47 @@
-# .NET Reflection MCP Server
+# C# LSP MCP Server
 
-.NET 어셈블리를 리플렉션으로 분석하는 MCP(Model Context Protocol) 서버입니다.
+C# Dev Kit의 Language Server Protocol을 사용하여 C# 소스 코드를 분석하는 MCP(Model Context Protocol) 서버입니다.
 
 ## 개요
 
-이 MCP 서버는 .NET 어셈블리의 타입, 메서드, 프로퍼티 정보를 조회할 수 있는 도구를 제공합니다. Claude Desktop이나 다른 MCP 클라이언트와 함께 사용하여 .NET 어셈블리를 분석할 수 있습니다.
+이 MCP 서버는 C# Dev Kit의 Roslyn Language Server와 통신하여 실시간으로 C# 코드 정보를 조회할 수 있는 도구를 제공합니다. Claude Desktop이나 다른 MCP 클라이언트와 함께 사용하여 C# 소스 코드를 분석할 수 있습니다.
+
+## 사전 요구사항
+
+- VS Code에 C# Dev Kit 확장이 설치되어 있어야 합니다
 
 ## 기능
 
-### 1. `get_method_signature` - 메서드 시그니처 조회
-특정 메서드의 시그니처, 파라미터, 반환 타입을 조회합니다.
+### 1. `get_symbol_info` - 심볼 정보 조회
+C# 소스 파일에서 심볼(클래스, 메서드, 프로퍼티 등)의 상세 정보를 조회합니다.
 
 **파라미터:**
-- `assembly_path` (필수): .NET 어셈블리 파일 경로
-- `method_name` (필수): 검색할 메서드 이름
-- `type_name` (선택): 메서드를 포함하는 타입의 전체 이름
+- `file_path` (필수): C# 소스 파일 경로
+- `symbol_name` (필수): 검색할 심볼 이름
 
-### 2. `get_type_info` - 타입 정보 조회
-타입의 상세 정보(메서드, 프로퍼티, 인터페이스 등)를 조회합니다.
-
-**파라미터:**
-- `assembly_path` (필수): .NET 어셈블리 파일 경로
-- `type_name` (필수): 검사할 타입의 전체 이름
-
-### 3. `list_types` - 타입 목록 조회
-어셈블리의 모든 타입을 나열합니다.
+### 2. `get_hover_info` - 호버 정보 조회
+특정 위치의 심볼에 대한 호버 정보(문서, 타입 정보)를 조회합니다. VS Code에서 코드 위에 마우스를 올렸을 때 나타나는 정보와 동일합니다.
 
 **파라미터:**
-- `assembly_path` (필수): .NET 어셈블리 파일 경로
-- `filter` (선택): 타입 이름 필터 (대소문자 구분 안함)
+- `file_path` (필수): C# 소스 파일 경로
+- `line` (필수): 라인 번호 (0부터 시작)
+- `character` (필수): 문자 위치 (0부터 시작)
+
+### 3. `find_references` - 참조 찾기
+C# 소스 코드에서 심볼의 모든 참조를 찾습니다.
+
+**파라미터:**
+- `file_path` (필수): C# 소스 파일 경로
+- `line` (필수): 심볼이 정의된 라인 번호 (0부터 시작)
+- `character` (필수): 문자 위치 (0부터 시작)
+
+### 4. `go_to_definition` - 정의로 이동
+C# 소스 코드에서 심볼의 정의 위치를 반환합니다.
+
+**파라미터:**
+- `file_path` (필수): C# 소스 파일 경로
+- `line` (필수): 라인 번호 (0부터 시작)
+- `character` (필수): 문자 위치 (0부터 시작)
 
 ## 설치 및 사용
 
@@ -125,22 +138,24 @@ Claude Desktop의 설정 파일에 다음을 추가하세요:
 Claude Desktop에서 다음과 같이 요청할 수 있습니다:
 
 ```
-Proto.Actor.dll 어셈블리에서 SpawnNamed 메서드의 시그니처를 알려줘
+Program.cs 파일에서 Main 메서드의 심볼 정보를 알려줘
 ```
 
 ```
-Proto.IRootContext 타입의 정보를 보여줘
+Program.cs 파일의 10번째 줄, 20번째 문자에 있는 심볼의 호버 정보를 보여줘
 ```
 
 ```
-Proto.Actor.dll에서 RootContext를 포함하는 모든 타입을 나열해줘
+MyClass.cs 파일의 5번째 줄, 15번째 문자에 있는 심볼의 모든 참조를 찾아줘
 ```
 
 ## 기술 스택
 
 - .NET 9.0
 - ModelContextProtocol 0.4.0-preview.3
+- StreamJsonRpc 2.19.27
 - stdio transport (표준 입출력 기반 통신)
+- Roslyn Language Server (C# Dev Kit)
 
 ## 라이선스
 
