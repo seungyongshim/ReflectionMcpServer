@@ -46,6 +46,43 @@ C# 코드의 구문 오류, 경고, 진단 정보를 분석합니다.
 **파라미터:**
 - `filePath` (필수): C# 소스 파일 경로
 
+### 5. `analyze_project` - 프로젝트 분석
+.csproj 파일을 기반으로 전체 프로젝트를 분석합니다. NuGet 패키지를 포함한 모든 참조를 로드하여 심볼 검색이 가능합니다.
+
+**파라미터:**
+- `projectPath` (필수): .csproj 파일 경로
+- `symbolName` (선택): 검색할 심볼 이름
+
+**예제 출력:**
+```
+Project: ReflectionMcp
+Language: C#
+Files: 3
+References: 224
+
+Referenced Assemblies:
+  - Microsoft.CodeAnalysis.CSharp.dll
+  - ModelContextProtocol.dll
+  ...
+```
+
+### 6. `find_nuget_symbol` - NuGet 심볼 찾기
+프로젝트가 참조하는 NuGet 패키지에서 타입이나 메서드를 찾습니다. 인터페이스, 클래스, 메서드 등 모든 종류의 심볼을 검색할 수 있습니다.
+
+**파라미터:**
+- `projectPath` (필수): .csproj 파일 경로
+- `symbolName` (필수): 검색할 심볼 이름
+
+**예제 출력:**
+```
+Assembly: Microsoft.Extensions.Hosting.Abstractions
+────────────────────────────────────────────────────────────
+  Interface: Microsoft.Extensions.Hosting.IHost
+    Implements: System.IDisposable
+  Interface: Microsoft.Extensions.Hosting.IHostBuilder
+  ...
+```
+
 ## 설치 및 사용
 
 ### 방법 1: dnx로 바로 실행 (.NET 10+)

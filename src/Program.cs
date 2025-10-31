@@ -1,16 +1,25 @@
 using System;
+using System.Collections.Generic;
 using System.ComponentModel;
 using System.IO;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
+using Microsoft.Build.Locator;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
+using Microsoft.CodeAnalysis.MSBuild;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using ModelContextProtocol.Server;
+
+// Register MSBuild before creating host
+if (!MSBuildLocator.IsRegistered)
+{
+    MSBuildLocator.RegisterDefaults();
+}
 
 var builder = Host.CreateApplicationBuilder(args);
 
@@ -330,4 +339,257 @@ public static class RoslynTools
             return $"Error: {ex.Message}\n{ex.StackTrace}";
         }
     }
+
+    [McpServerTool(Name = "analyze_project"), Description("Analyze an entire C# project (.csproj) including all files and NuGet package references. Provides access to symbols from referenced packages.")]
+    public static async Task<string> AnalyzeProject(
+        [Description("Path to the .csproj file")] string projectPath,
+        [Description("Symbol name to search for (optional, searches across all references)")] string? symbolName = null)
+    {
+        try
+        {
+            var result = new StringBuilder();
+            result.AppendLine($"Loading project: {projectPath}");
+            result.AppendLine();
+
+            using var workspace = MSBuildWorkspace.Create();
+            var project = await workspace.OpenProjectAsync(projectPath);
+
+            result.AppendLine($"Project: {project.Name}");
+            result.AppendLine($"Language: {project.Language}");
+            result.AppendLine($"Files: {project.Documents.Count()}");
+            result.AppendLine($"References: {project.MetadataReferences.Count()}");
+            result.AppendLine();
+
+            var compilation = await project.GetCompilationAsync();
+            if (compilation == null)
+            {
+                return "Failed to get compilation";
+            }
+
+            // List referenced assemblies
+            result.AppendLine("Referenced Assemblies:");
+            foreach (var reference in compilation.References)
+            {
+                if (reference is PortableExecutableReference peRef && peRef.Display != null)
+                {
+                    var assemblyName = Path.GetFileName(peRef.Display);
+                    result.AppendLine($"  - {assemblyName}");
+                }
+            }
+            result.AppendLine();
+
+            // Search for symbol if specified
+            if (!string.IsNullOrEmpty(symbolName))
+            {
+                result.AppendLine($"Searching for symbol: {symbolName}");
+                result.AppendLine();
+
+                var symbols = compilation.GetSymbolsWithName(
+                    name => name.Contains(symbolName, StringComparison.OrdinalIgnoreCase),
+                    SymbolFilter.TypeAndMember)
+                    .Take(20)
+                    .ToList();
+
+                if (symbols.Any())
+                {
+                    result.AppendLine($"Found {symbols.Count} symbol(s) (showing first 20):");
+                    result.AppendLine();
+
+                    foreach (var symbol in symbols)
+                    {
+                        var assembly = symbol.ContainingAssembly?.Name ?? "Unknown";
+                        var ns = symbol.ContainingNamespace?.ToDisplayString() ?? "";
+                        
+                        result.AppendLine($"╔═══ {symbol.Kind}: {symbol.Name}");
+                        result.AppendLine($"║ Full Name: {symbol.ToDisplayString()}");
+                        result.AppendLine($"║ Assembly: {assembly}");
+                        result.AppendLine($"║ Namespace: {ns}");
+
+                        if (symbol is IMethodSymbol method)
+                        {
+                            result.AppendLine($"║ Return Type: {method.ReturnType}");
+                            result.AppendLine($"║ Parameters: {string.Join(", ", method.Parameters.Select(p => $"{p.Type} {p.Name}"))}");
+                        }
+                        else if (symbol is IPropertySymbol property)
+                        {
+                            result.AppendLine($"║ Type: {property.Type}");
+                        }
+                        else if (symbol is INamedTypeSymbol type)
+                        {
+                            result.AppendLine($"║ Type Kind: {type.TypeKind}");
+                            result.AppendLine($"║ Base Type: {type.BaseType}");
+                        }
+
+                        result.AppendLine($"╚═══");
+                        result.AppendLine();
+                    }
+                }
+                else
+                {
+                    result.AppendLine($"✗ No symbols found matching '{symbolName}'");
+                }
+            }
+
+            // Project diagnostics
+            var diagnostics = compilation.GetDiagnostics()
+                .Where(d => d.Severity >= DiagnosticSeverity.Warning)
+                .Take(10)
+                .ToList();
+
+            if (diagnostics.Any())
+            {
+                result.AppendLine($"Diagnostics (showing first 10):");
+                foreach (var diag in diagnostics)
+                {
+                    result.AppendLine($"  [{diag.Severity}] {diag.Id}: {diag.GetMessage()}");
+                }
+            }
+
+            return result.ToString();
+        }
+        catch (Exception ex)
+        {
+            return $"Error: {ex.Message}\n{ex.StackTrace}";
+        }
+    }
+
+    [McpServerTool(Name = "find_nuget_symbol"), Description("Find a specific type or method from NuGet packages referenced in a project. Useful for exploring external library APIs.")]
+    public static async Task<string> FindNuGetSymbol(
+        [Description("Path to the .csproj file")] string projectPath,
+        [Description("Full or partial name of the type/method to find")] string symbolName)
+    {
+        try
+        {
+            var result = new StringBuilder();
+
+            using var workspace = MSBuildWorkspace.Create();
+            var project = await workspace.OpenProjectAsync(projectPath);
+            var compilation = await project.GetCompilationAsync();
+            
+            if (compilation == null)
+            {
+                return "Failed to get compilation";
+            }
+
+            result.AppendLine($"Searching for: {symbolName}");
+            result.AppendLine($"In project: {project.Name}");
+            result.AppendLine();
+
+            // Search all referenced assemblies for matching symbols
+            var foundSymbols = new List<ISymbol>();
+            
+            foreach (var reference in compilation.References)
+            {
+                if (compilation.GetAssemblyOrModuleSymbol(reference) is IAssemblySymbol assemblySymbol)
+                {
+                    var visitor = new SymbolVisitor(symbolName);
+                    visitor.Visit(assemblySymbol.GlobalNamespace);
+                    foundSymbols.AddRange(visitor.FoundSymbols);
+                }
+            }
+
+            var symbols = foundSymbols.Take(50).ToList();
+
+            if (!symbols.Any())
+            {
+                return $"No external symbols found matching '{symbolName}'";
+            }
+
+            result.AppendLine($"Found {foundSymbols.Count} external symbol(s) (showing first 50):");
+            result.AppendLine();
+
+            var groupedByAssembly = symbols.GroupBy(s => s.ContainingAssembly?.Name ?? "Unknown");
+
+            foreach (var assemblyGroup in groupedByAssembly.OrderBy(g => g.Key))
+            {
+                result.AppendLine($"Assembly: {assemblyGroup.Key}");
+                result.AppendLine(new string('─', 60));
+
+                foreach (var symbol in assemblyGroup)
+                {
+                    var kind = symbol.Kind.ToString();
+                    if (symbol is INamedTypeSymbol namedType)
+                    {
+                        kind = $"{namedType.TypeKind}";
+                    }
+                    
+                    result.AppendLine($"  {kind}: {symbol.ToDisplayString()}");
+                    
+                    if (symbol is IMethodSymbol method && method.Parameters.Any())
+                    {
+                        foreach (var param in method.Parameters)
+                        {
+                            result.AppendLine($"    - {param.Type} {param.Name}");
+                        }
+                    }
+                    else if (symbol is INamedTypeSymbol type)
+                    {
+                        if (type.BaseType != null && type.BaseType.SpecialType != SpecialType.System_Object)
+                        {
+                            result.AppendLine($"    Base: {type.BaseType}");
+                        }
+                        if (type.Interfaces.Any())
+                        {
+                            result.AppendLine($"    Implements: {string.Join(", ", type.Interfaces.Take(3))}");
+                        }
+                    }
+                }
+                result.AppendLine();
+            }
+
+            return result.ToString();
+        }
+        catch (Exception ex)
+        {
+            return $"Error: {ex.Message}\n{ex.StackTrace}";
+        }
+    }
 }
+
+// Symbol visitor to recursively search for symbols
+public class SymbolVisitor : SymbolVisitor<object?>
+{
+    private readonly string _searchTerm;
+    public List<ISymbol> FoundSymbols { get; } = new();
+
+    public SymbolVisitor(string searchTerm)
+    {
+        _searchTerm = searchTerm;
+    }
+
+    public override object? VisitNamespace(INamespaceSymbol symbol)
+    {
+        foreach (var member in symbol.GetMembers())
+        {
+            member.Accept(this);
+        }
+        return null;
+    }
+
+    public override object? VisitNamedType(INamedTypeSymbol symbol)
+    {
+        if (symbol.Name.Contains(_searchTerm, StringComparison.OrdinalIgnoreCase))
+        {
+            FoundSymbols.Add(symbol);
+        }
+
+        // Visit nested types
+        foreach (var member in symbol.GetTypeMembers())
+        {
+            member.Accept(this);
+        }
+
+        // Visit methods if searching for method names
+        foreach (var member in symbol.GetMembers())
+        {
+            if (member is IMethodSymbol method && 
+                method.Name.Contains(_searchTerm, StringComparison.OrdinalIgnoreCase))
+            {
+                FoundSymbols.Add(method);
+            }
+        }
+
+        return null;
+    }
+}
+

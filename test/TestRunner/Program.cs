@@ -8,6 +8,7 @@ class Program
         Console.WriteLine("=== Testing Roslyn Tools ===\n");
 
         var testFile = @"Z:\2025\ReflectionMcpServer\test\Calculator.cs";
+        var testProject = @"Z:\2025\ReflectionMcpServer\src\ReflectionMcp.csproj";
 
         // Test 1: List Types
         Console.WriteLine("Test 1: List Types");
@@ -30,11 +31,25 @@ class Program
         Console.WriteLine(result3);
         Console.WriteLine();
 
-        // Test 4: Analyze Code
-        Console.WriteLine("Test 4: Analyze Code");
-        Console.WriteLine("====================");
-        var result4 = await RoslynTools.AnalyzeCode(testFile);
+        // Test 4: Analyze Project (NEW!)
+        Console.WriteLine("Test 4: Analyze Project");
+        Console.WriteLine("========================");
+        var result4 = await RoslynTools.AnalyzeProject(testProject);
         Console.WriteLine(result4);
+        Console.WriteLine();
+
+        // Test 5: Find NuGet Symbol (NEW!)
+        Console.WriteLine("Test 5: Find NuGet Symbol 'IHost'");
+        Console.WriteLine("====================================");
+        var result5 = await RoslynTools.FindNuGetSymbol(testProject, "IHost");
+        Console.WriteLine(result5);
+        Console.WriteLine();
+
+        // Test 6: Search for symbol in project
+        Console.WriteLine("Test 6: Search Symbol 'RoslynTools' in Project");
+        Console.WriteLine("================================================");
+        var result6 = await RoslynTools.AnalyzeProject(testProject, "RoslynTools");
+        Console.WriteLine(result6);
         Console.WriteLine();
 
         Console.WriteLine("=== All Tests Complete ===");
