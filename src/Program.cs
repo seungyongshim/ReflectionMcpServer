@@ -70,47 +70,41 @@ public static class RoslynTools
             {
                 foreach (var symbol in symbols)
                 {
-                    result.AppendLine($"╔═══ {symbol!.Kind}: {symbol.Name}");
-                    result.AppendLine($"║ Full Name: {symbol.ToDisplayString()}");
-                    result.AppendLine($"║ Type: {symbol.GetType().Name}");
+                    result.AppendLine($"- kind: {symbol!.Kind}");
+                    result.AppendLine($"  name: {symbol.Name}");
+                    result.AppendLine($"  fullName: {symbol.ToDisplayString()}");
                     
                     if (symbol is IMethodSymbol method)
                     {
-                        result.AppendLine($"║ Return Type: {method.ReturnType}");
-                        result.AppendLine($"║ Parameters:");
-                        foreach (var param in method.Parameters)
+                        result.AppendLine($"  returnType: {method.ReturnType}");
+                        if (method.Parameters.Any())
                         {
-                            var optional = param.HasExplicitDefaultValue ? $" = {param.ExplicitDefaultValue}" : "";
-                            result.AppendLine($"║   - {param.Type} {param.Name}{optional}");
+                            result.AppendLine($"  parameters:");
+                            foreach (var param in method.Parameters)
+                            {
+                                var opt = param.HasExplicitDefaultValue ? $" (default: {param.ExplicitDefaultValue})" : "";
+                                result.AppendLine($"    - {param.Type} {param.Name}{opt}");
+                            }
                         }
                     }
                     else if (symbol is IPropertySymbol property)
                     {
-                        result.AppendLine($"║ Property Type: {property.Type}");
-                        result.AppendLine($"║ Get: {property.GetMethod != null}");
-                        result.AppendLine($"║ Set: {property.SetMethod != null}");
+                        result.AppendLine($"  type: {property.Type}");
+                        result.AppendLine($"  accessors: {(property.GetMethod != null ? "get" : "")}{(property.SetMethod != null ? " set" : "")}");
                     }
                     else if (symbol is INamedTypeSymbol namedType)
                     {
-                        result.AppendLine($"║ Type Kind: {namedType.TypeKind}");
-                        result.AppendLine($"║ Base Type: {namedType.BaseType}");
-                        result.AppendLine($"║ Interfaces: {string.Join(", ", namedType.Interfaces)}");
+                        result.AppendLine($"  typeKind: {namedType.TypeKind}");
+                        if (namedType.BaseType != null && namedType.BaseType.SpecialType != SpecialType.System_Object)
+                            result.AppendLine($"  base: {namedType.BaseType}");
+                        if (namedType.Interfaces.Any())
+                            result.AppendLine($"  interfaces: [{string.Join(", ", namedType.Interfaces)}]");
                     }
-                    
-                    var docComment = symbol.GetDocumentationCommentXml();
-                    if (!string.IsNullOrEmpty(docComment))
-                    {
-                        result.AppendLine($"║ Documentation:");
-                        result.AppendLine($"║ {docComment}");
-                    }
-                    
-                    result.AppendLine($"╚═══");
-                    result.AppendLine();
                 }
             }
             else
             {
-                result.AppendLine($"✗ No symbol named '{symbolName}' found.");
+                result.AppendLine($"error: No symbol '{symbolName}' found");
             }
 
             return result.ToString();
@@ -153,65 +147,55 @@ public static class RoslynTools
                 var typeSymbol = semanticModel.GetDeclaredSymbol(typeDecl) as INamedTypeSymbol;
                 if (typeSymbol == null) continue;
 
-                result.AppendLine($"╔═══ Type: {typeSymbol.Name}");
-                result.AppendLine($"║ Full Name: {typeSymbol.ToDisplayString()}");
-                result.AppendLine($"║ Kind: {typeSymbol.TypeKind}");
-                result.AppendLine($"║ Namespace: {typeSymbol.ContainingNamespace}");
-                result.AppendLine($"║ Accessibility: {typeSymbol.DeclaredAccessibility}");
-                result.AppendLine($"║ Is Abstract: {typeSymbol.IsAbstract}");
-                result.AppendLine($"║ Is Sealed: {typeSymbol.IsSealed}");
-                result.AppendLine($"║ Base Type: {typeSymbol.BaseType}");
+                result.AppendLine($"- name: {typeSymbol.Name}");
+                result.AppendLine($"  fullName: {typeSymbol.ToDisplayString()}");
+                result.AppendLine($"  kind: {typeSymbol.TypeKind}");
+                result.AppendLine($"  namespace: {typeSymbol.ContainingNamespace}");
+                result.AppendLine($"  accessibility: {typeSymbol.DeclaredAccessibility}");
+                if (typeSymbol.IsAbstract) result.AppendLine($"  abstract: true");
+                if (typeSymbol.IsSealed) result.AppendLine($"  sealed: true");
+                if (typeSymbol.BaseType != null && typeSymbol.BaseType.SpecialType != SpecialType.System_Object)
+                    result.AppendLine($"  base: {typeSymbol.BaseType}");
                 
                 if (typeSymbol.Interfaces.Any())
                 {
-                    result.AppendLine($"║ Interfaces:");
+                    result.AppendLine($"  interfaces:");
                     foreach (var iface in typeSymbol.Interfaces)
-                    {
-                        result.AppendLine($"║   - {iface}");
-                    }
+                        result.AppendLine($"    - {iface}");
                 }
 
                 var members = typeSymbol.GetMembers();
-                
                 var methods = members.OfType<IMethodSymbol>()
                     .Where(m => m.MethodKind == MethodKind.Ordinary)
                     .ToList();
                 if (methods.Any())
                 {
-                    result.AppendLine($"║");
-                    result.AppendLine($"║ Methods ({methods.Count}):");
+                    result.AppendLine($"  methods:");
                     foreach (var method in methods)
                     {
                         var parameters = string.Join(", ", method.Parameters.Select(p => $"{p.Type} {p.Name}"));
-                        result.AppendLine($"║   {method.DeclaredAccessibility.ToString().ToLower()} {method.ReturnType} {method.Name}({parameters})");
+                        result.AppendLine($"    - {method.ReturnType} {method.Name}({parameters})");
                     }
                 }
 
                 var properties = members.OfType<IPropertySymbol>().ToList();
                 if (properties.Any())
                 {
-                    result.AppendLine($"║");
-                    result.AppendLine($"║ Properties ({properties.Count}):");
+                    result.AppendLine($"  properties:");
                     foreach (var prop in properties)
                     {
-                        var accessors = $"{(prop.GetMethod != null ? "get;" : "")}{(prop.SetMethod != null ? " set;" : "")}";
-                        result.AppendLine($"║   {prop.DeclaredAccessibility.ToString().ToLower()} {prop.Type} {prop.Name} {{ {accessors} }}");
+                        var acc = $"{(prop.GetMethod != null ? "get" : "")}{(prop.SetMethod != null ? " set" : "")}";
+                        result.AppendLine($"    - {prop.Type} {prop.Name} {{ {acc} }}");
                     }
                 }
 
-                var fields = members.OfType<IFieldSymbol>().ToList();
+                var fields = members.OfType<IFieldSymbol>().Where(f => !f.IsImplicitlyDeclared).ToList();
                 if (fields.Any())
                 {
-                    result.AppendLine($"║");
-                    result.AppendLine($"║ Fields ({fields.Count}):");
+                    result.AppendLine($"  fields:");
                     foreach (var field in fields)
-                    {
-                        result.AppendLine($"║   {field.DeclaredAccessibility.ToString().ToLower()} {field.Type} {field.Name}");
-                    }
+                        result.AppendLine($"    - {field.Type} {field.Name}");
                 }
-
-                result.AppendLine($"╚═══");
-                result.AppendLine();
             }
 
             return result.ToString();
@@ -237,9 +221,6 @@ public static class RoslynTools
             var semanticModel = compilation.GetSemanticModel(tree);
             var result = new StringBuilder();
 
-            result.AppendLine($"File: {filePath}");
-            result.AppendLine();
-
             var root = await tree.GetRootAsync();
             var typeDeclarations = root.DescendantNodes()
                 .OfType<TypeDeclarationSyntax>()
@@ -247,27 +228,23 @@ public static class RoslynTools
 
             if (!typeDeclarations.Any())
             {
-                return "No types found in file.";
+                return "types: []";
             }
 
-            result.AppendLine($"Found {typeDeclarations.Count} type(s):");
-            result.AppendLine();
+            result.AppendLine($"file: {filePath}");
+            result.AppendLine($"types:");
 
             foreach (var typeDecl in typeDeclarations)
             {
                 var typeSymbol = semanticModel.GetDeclaredSymbol(typeDecl) as INamedTypeSymbol;
                 if (typeSymbol == null) continue;
 
-                var kind = typeSymbol.TypeKind.ToString().ToLower();
-                var accessibility = typeSymbol.DeclaredAccessibility.ToString().ToLower();
-                var modifiers = new StringBuilder();
-                
-                if (typeSymbol.IsAbstract && typeSymbol.TypeKind == TypeKind.Class)
-                    modifiers.Append("abstract ");
-                if (typeSymbol.IsSealed)
-                    modifiers.Append("sealed ");
+                var modifiers = new List<string>();
+                if (typeSymbol.IsAbstract && typeSymbol.TypeKind == TypeKind.Class) modifiers.Add("abstract");
+                if (typeSymbol.IsSealed) modifiers.Add("sealed");
+                var mod = modifiers.Any() ? string.Join(" ", modifiers) + " " : "";
 
-                result.AppendLine($"{accessibility} {modifiers}{kind} {typeSymbol.ToDisplayString()}");
+                result.AppendLine($"  - {typeSymbol.DeclaredAccessibility.ToString().ToLower()} {mod}{typeSymbol.TypeKind.ToString().ToLower()}: {typeSymbol.ToDisplayString()}");
             }
 
             return result.ToString();
@@ -293,43 +270,31 @@ public static class RoslynTools
             var diagnostics = compilation.GetDiagnostics();
             var result = new StringBuilder();
 
-            result.AppendLine($"File: {filePath}");
-            result.AppendLine();
-
             var errors = diagnostics.Where(d => d.Severity == DiagnosticSeverity.Error).ToList();
             var warnings = diagnostics.Where(d => d.Severity == DiagnosticSeverity.Warning).ToList();
-            var infos = diagnostics.Where(d => d.Severity == DiagnosticSeverity.Info).ToList();
 
-            result.AppendLine($"Errors: {errors.Count}");
-            result.AppendLine($"Warnings: {warnings.Count}");
-            result.AppendLine($"Info: {infos.Count}");
-            result.AppendLine();
+            result.AppendLine($"file: {filePath}");
+            result.AppendLine($"errors: {errors.Count}");
+            result.AppendLine($"warnings: {warnings.Count}");
 
             if (errors.Any())
             {
-                result.AppendLine("═══ ERRORS ═══");
-                foreach (var error in errors)
+                result.AppendLine($"errorList:");
+                foreach (var error in errors.Take(10))
                 {
                     var lineSpan = error.Location.GetLineSpan();
-                    result.AppendLine($"[{lineSpan.StartLinePosition.Line + 1}:{lineSpan.StartLinePosition.Character + 1}] {error.Id}: {error.GetMessage()}");
+                    result.AppendLine($"  - [{lineSpan.StartLinePosition.Line + 1},{lineSpan.StartLinePosition.Character + 1}] {error.Id}: {error.GetMessage()}");
                 }
-                result.AppendLine();
             }
 
             if (warnings.Any())
             {
-                result.AppendLine("═══ WARNINGS ═══");
-                foreach (var warning in warnings)
+                result.AppendLine($"warningList:");
+                foreach (var warning in warnings.Take(10))
                 {
                     var lineSpan = warning.Location.GetLineSpan();
-                    result.AppendLine($"[{lineSpan.StartLinePosition.Line + 1}:{lineSpan.StartLinePosition.Character + 1}] {warning.Id}: {warning.GetMessage()}");
+                    result.AppendLine($"  - [{lineSpan.StartLinePosition.Line + 1},{lineSpan.StartLinePosition.Character + 1}] {warning.Id}: {warning.GetMessage()}");
                 }
-                result.AppendLine();
-            }
-
-            if (!errors.Any() && !warnings.Any())
-            {
-                result.AppendLine("✓ No errors or warnings found.");
             }
 
             return result.ToString();
@@ -354,36 +319,19 @@ public static class RoslynTools
             using var workspace = MSBuildWorkspace.Create();
             var project = await workspace.OpenProjectAsync(projectPath);
 
-            result.AppendLine($"Project: {project.Name}");
-            result.AppendLine($"Language: {project.Language}");
-            result.AppendLine($"Files: {project.Documents.Count()}");
-            result.AppendLine($"References: {project.MetadataReferences.Count()}");
-            result.AppendLine();
+            result.AppendLine($"project: {project.Name}");
+            result.AppendLine($"files: {project.Documents.Count()}");
+            result.AppendLine($"references: {project.MetadataReferences.Count()}");
 
             var compilation = await project.GetCompilationAsync();
             if (compilation == null)
             {
-                return "Failed to get compilation";
+                return "error: Failed to get compilation";
             }
-
-            // List referenced assemblies
-            result.AppendLine("Referenced Assemblies:");
-            foreach (var reference in compilation.References)
-            {
-                if (reference is PortableExecutableReference peRef && peRef.Display != null)
-                {
-                    var assemblyName = Path.GetFileName(peRef.Display);
-                    result.AppendLine($"  - {assemblyName}");
-                }
-            }
-            result.AppendLine();
 
             // Search for symbol if specified
             if (!string.IsNullOrEmpty(symbolName))
             {
-                result.AppendLine($"Searching for symbol: {symbolName}");
-                result.AppendLine();
-
                 var symbols = compilation.GetSymbolsWithName(
                     name => name.Contains(symbolName, StringComparison.OrdinalIgnoreCase),
                     SymbolFilter.TypeAndMember)
@@ -392,56 +340,30 @@ public static class RoslynTools
 
                 if (symbols.Any())
                 {
-                    result.AppendLine($"Found {symbols.Count} symbol(s) (showing first 20):");
-                    result.AppendLine();
-
+                    result.AppendLine($"symbols:");
                     foreach (var symbol in symbols)
                     {
                         var assembly = symbol.ContainingAssembly?.Name ?? "Unknown";
-                        var ns = symbol.ContainingNamespace?.ToDisplayString() ?? "";
+                        result.AppendLine($"  - kind: {symbol.Kind}");
+                        result.AppendLine($"    name: {symbol.Name}");
+                        result.AppendLine($"    fullName: {symbol.ToDisplayString()}");
+                        result.AppendLine($"    assembly: {assembly}");
                         
-                        result.AppendLine($"╔═══ {symbol.Kind}: {symbol.Name}");
-                        result.AppendLine($"║ Full Name: {symbol.ToDisplayString()}");
-                        result.AppendLine($"║ Assembly: {assembly}");
-                        result.AppendLine($"║ Namespace: {ns}");
-
                         if (symbol is IMethodSymbol method)
                         {
-                            result.AppendLine($"║ Return Type: {method.ReturnType}");
-                            result.AppendLine($"║ Parameters: {string.Join(", ", method.Parameters.Select(p => $"{p.Type} {p.Name}"))}");
-                        }
-                        else if (symbol is IPropertySymbol property)
-                        {
-                            result.AppendLine($"║ Type: {property.Type}");
+                            result.AppendLine($"    returnType: {method.ReturnType}");
+                            if (method.Parameters.Any())
+                                result.AppendLine($"    parameters: {string.Join(", ", method.Parameters.Select(p => $"{p.Type} {p.Name}"))}");
                         }
                         else if (symbol is INamedTypeSymbol type)
                         {
-                            result.AppendLine($"║ Type Kind: {type.TypeKind}");
-                            result.AppendLine($"║ Base Type: {type.BaseType}");
+                            result.AppendLine($"    typeKind: {type.TypeKind}");
                         }
-
-                        result.AppendLine($"╚═══");
-                        result.AppendLine();
                     }
                 }
                 else
                 {
-                    result.AppendLine($"✗ No symbols found matching '{symbolName}'");
-                }
-            }
-
-            // Project diagnostics
-            var diagnostics = compilation.GetDiagnostics()
-                .Where(d => d.Severity >= DiagnosticSeverity.Warning)
-                .Take(10)
-                .ToList();
-
-            if (diagnostics.Any())
-            {
-                result.AppendLine($"Diagnostics (showing first 10):");
-                foreach (var diag in diagnostics)
-                {
-                    result.AppendLine($"  [{diag.Severity}] {diag.Id}: {diag.GetMessage()}");
+                    result.AppendLine($"error: No symbols found matching '{symbolName}'");
                 }
             }
 
