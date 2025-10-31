@@ -28,17 +28,17 @@ jobs:
     - name: Restore dependencies
       run: dotnet restore src/ReflectionMcp.csproj
     
-    - name: Build
-      run: dotnet build src/ReflectionMcp.csproj --configuration Release --no-restore
-    
-    - name: Run tests (if any)
-      run: dotnet test src/ReflectionMcp.csproj --configuration Release --no-build --verbosity normal || true
-    
     - name: Extract version from release tag
       run: |
         VERSION=${GITHUB_REF#refs/tags/v}
         echo "PACKAGE_VERSION=$VERSION" >> $GITHUB_ENV
         echo "Package version: $VERSION"
+    
+    - name: Build
+      run: dotnet build src/ReflectionMcp.csproj --configuration Release --no-restore /p:Version=${{ env.PACKAGE_VERSION }}
+    
+    - name: Run tests (if any)
+      run: dotnet test src/ReflectionMcp.csproj --configuration Release --no-build --verbosity normal || true
     
     - name: Pack
       run: dotnet pack src/ReflectionMcp.csproj --configuration Release --no-build --output ./artifacts /p:Version=${{ env.PACKAGE_VERSION }}
