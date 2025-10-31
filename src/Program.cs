@@ -419,6 +419,11 @@ public static class RoslynTools
 
             result.AppendLine($"found: {foundSymbols.Count}");
             result.AppendLine($"showing: {symbols.Count}");
+            
+            // Debug: show symbol kinds distribution
+            var kindCounts = symbols.GroupBy(s => s.Kind).Select(g => $"{g.Key}:{g.Count()}");
+            result.AppendLine($"kinds: [{string.Join(", ", kindCounts)}]");
+            
             result.AppendLine("symbols:");
 
             var groupedByAssembly = symbols.GroupBy(s => s.ContainingAssembly?.Name ?? "Unknown");
@@ -470,6 +475,7 @@ public static class RoslynTools
 public class SymbolVisitor : SymbolVisitor<object?>
 {
     private readonly string _searchTerm;
+    private readonly HashSet<ISymbol> _visited = new(SymbolEqualityComparer.Default);
     public List<ISymbol> FoundSymbols { get; } = new();
 
     public SymbolVisitor(string searchTerm)
@@ -488,25 +494,71 @@ public class SymbolVisitor : SymbolVisitor<object?>
 
     public override object? VisitNamedType(INamedTypeSymbol symbol)
     {
-        if (symbol.Name.Contains(_searchTerm, StringComparison.OrdinalIgnoreCase))
+        var typeMatches = symbol.Name.Contains(_searchTerm, StringComparison.OrdinalIgnoreCase);
+        
+        if (typeMatches)
         {
-            FoundSymbols.Add(symbol);
+            // Add type only once
+            if (_visited.Add(symbol))
+            {
+                FoundSymbols.Add(symbol);
+            }
+            
+            // If type name matches, include all its public members
+            // This handles cases like searching "CSharpSyntaxTree" to find ParseText, Create, etc.
+            foreach (var member in symbol.GetMembers())
+            {
+                // Skip constructors (same name as type, would be duplicate)
+                if (member.Kind == SymbolKind.Method && member is IMethodSymbol methodSym)
+                {
+                    if (methodSym.MethodKind == MethodKind.Constructor || 
+                        methodSym.MethodKind == MethodKind.StaticConstructor)
+                        continue;
+                }
+                
+                // Only include public/protected members
+                if (member.DeclaredAccessibility == Accessibility.Public || 
+                    member.DeclaredAccessibility == Accessibility.Protected)
+                {
+                    if (_visited.Add(member))
+                    {
+                        FoundSymbols.Add(member);
+                    }
+                }
+            }
+        }
+        else
+        {
+            // Type name doesn't match, search individual members
+            foreach (var member in symbol.GetMembers())
+            {
+                // Skip special methods (constructors, destructors, property accessors, event accessors)
+                if (member is IMethodSymbol method)
+                {
+                    if (method.MethodKind == MethodKind.Constructor ||
+                        method.MethodKind == MethodKind.StaticConstructor ||
+                        method.MethodKind == MethodKind.Destructor ||
+                        method.MethodKind == MethodKind.PropertyGet ||
+                        method.MethodKind == MethodKind.PropertySet ||
+                        method.MethodKind == MethodKind.EventAdd ||
+                        method.MethodKind == MethodKind.EventRemove)
+                        continue;
+                }
+                
+                if (member.Name.Contains(_searchTerm, StringComparison.OrdinalIgnoreCase))
+                {
+                    if (_visited.Add(member))
+                    {
+                        FoundSymbols.Add(member);
+                    }
+                }
+            }
         }
 
         // Visit nested types
-        foreach (var member in symbol.GetTypeMembers())
+        foreach (var nestedType in symbol.GetTypeMembers())
         {
-            member.Accept(this);
-        }
-
-        // Visit methods if searching for method names
-        foreach (var member in symbol.GetMembers())
-        {
-            if (member is IMethodSymbol method && 
-                method.Name.Contains(_searchTerm, StringComparison.OrdinalIgnoreCase))
-            {
-                FoundSymbols.Add(method);
-            }
+            nestedType.Accept(this);
         }
 
         return null;
