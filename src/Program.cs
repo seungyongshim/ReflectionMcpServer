@@ -40,7 +40,7 @@ await builder.Build().RunAsync();
 [McpServerToolType]
 public static class RoslynTools
 {
-    [McpServerTool(Name = "get_symbol_info"), Description("ALWAYS USE THIS for analyzing C# (.cs) files. Get detailed symbol information (class, method, property, etc.) from C# source code using Roslyn. Provides type information, documentation, signatures, and member details.")]
+    [McpServerTool(Name = "get_symbol_info"), Description("ONLY for user-defined symbols declared in the current project source files. Use this to analyze classes, methods, properties defined in .cs files. For external types (System.*, NuGet packages), use find_nuget_symbol instead.")]
     public static async Task<string> GetSymbolInfo(
         [Description("Path to the C# source file")] string filePath,
         [Description("Symbol name to search for (class, method, property, etc.)")] string symbolName)
@@ -115,7 +115,7 @@ public static class RoslynTools
         }
     }
 
-    [McpServerTool(Name = "get_type_info"), Description("ALWAYS USE THIS for C# (.cs) type analysis. Get comprehensive type information from C# source code including all methods, properties, fields, and documentation.")]
+    [McpServerTool(Name = "get_type_info"), Description("ONLY for user-defined types in project source files. Get comprehensive information about classes, interfaces, structs, enums declared in .cs files, including all members, base types, and interfaces. For external types, use find_nuget_symbol.")]
     public static async Task<string> GetTypeInfo(
         [Description("Path to the C# source file")] string filePath,
         [Description("Full or partial type name to search for")] string typeName)
@@ -206,7 +206,7 @@ public static class RoslynTools
         }
     }
 
-    [McpServerTool(Name = "list_types"), Description("ALWAYS USE THIS for C# (.cs) files. List all types (classes, interfaces, enums, structs) defined in a C# source file.")]
+    [McpServerTool(Name = "list_types"), Description("List all user-defined types (classes, interfaces, enums, structs) declared in a C# source file with their accessibility and modifiers.")]
     public static async Task<string> ListTypes(
         [Description("Path to the C# source file")] string filePath)
     {
@@ -255,7 +255,7 @@ public static class RoslynTools
         }
     }
 
-    [McpServerTool(Name = "analyze_code"), Description("ALWAYS USE THIS for C# (.cs) code analysis. Analyze C# code for syntax errors, warnings, and get compilation diagnostics.")]
+    [McpServerTool(Name = "analyze_code"), Description("Analyze a C# source file for syntax errors, warnings, and compilation diagnostics. Returns error and warning counts with detailed messages and locations.")]
     public static async Task<string> AnalyzeCode(
         [Description("Path to the C# source file")] string filePath)
     {
@@ -305,7 +305,7 @@ public static class RoslynTools
         }
     }
 
-    [McpServerTool(Name = "analyze_project"), Description("REQUIRED for C# projects (.csproj). Analyze an entire C# project including all files and NuGet package references. Provides access to symbols from referenced packages. Use this when working with C# projects.")]
+    [McpServerTool(Name = "analyze_project"), Description("Analyze C# project metadata (file count, reference count) and search for user-defined symbols across project source files. For external library symbols (System.*, NuGet), prefer find_nuget_symbol which provides more detailed results.")]
     public static async Task<string> AnalyzeProject(
         [Description("Path to the .csproj file")] string projectPath,
         [Description("Symbol name to search for (optional, searches across all references)")] string? symbolName = null)
@@ -375,10 +375,10 @@ public static class RoslynTools
         }
     }
 
-    [McpServerTool(Name = "find_nuget_symbol"), Description("REQUIRED for finding C# types/methods in NuGet packages. Find a specific type or method from NuGet packages referenced in a project. Useful for exploring external library APIs. Always use this when searching for types from external libraries.")]
+    [McpServerTool(Name = "find_nuget_symbol"), Description("REQUIRED for finding types from external libraries and .NET BCL. Use this to find ANY type not defined in the current project source code, including: System.* types (StringBuilder, List, HttpClient), NuGet package types (INamedTypeSymbol from Roslyn), and all external assemblies. Returns detailed member information grouped by assembly. ALWAYS prefer this over grep_search for external types.")]
     public static async Task<string> FindNuGetSymbol(
         [Description("Path to the .csproj file")] string projectPath,
-        [Description("Full or partial name of the type/method to find")] string symbolName)
+        [Description("Full or partial name of the type/method to find (e.g., StringBuilder, HttpClient, INamedTypeSymbol)")] string symbolName)
     {
         try
         {
