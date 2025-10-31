@@ -417,15 +417,16 @@ public static class RoslynTools
                 return $"No external symbols found matching '{symbolName}'";
             }
 
-            result.AppendLine($"Found {foundSymbols.Count} external symbol(s) (showing first 50):");
-            result.AppendLine();
+            result.AppendLine($"found: {foundSymbols.Count}");
+            result.AppendLine($"showing: {symbols.Count}");
+            result.AppendLine("symbols:");
 
             var groupedByAssembly = symbols.GroupBy(s => s.ContainingAssembly?.Name ?? "Unknown");
 
             foreach (var assemblyGroup in groupedByAssembly.OrderBy(g => g.Key))
             {
-                result.AppendLine($"Assembly: {assemblyGroup.Key}");
-                result.AppendLine(new string('─', 60));
+                result.AppendLine($"  - assembly: {assemblyGroup.Key}");
+                result.AppendLine("    items:");
 
                 foreach (var symbol in assemblyGroup)
                 {
@@ -435,28 +436,25 @@ public static class RoslynTools
                         kind = $"{namedType.TypeKind}";
                     }
                     
-                    result.AppendLine($"  {kind}: {symbol.ToDisplayString()}");
+                    result.AppendLine($"      - kind: {kind}");
+                    result.AppendLine($"        name: {symbol.ToDisplayString()}");
                     
                     if (symbol is IMethodSymbol method && method.Parameters.Any())
                     {
-                        foreach (var param in method.Parameters)
-                        {
-                            result.AppendLine($"    - {param.Type} {param.Name}");
-                        }
+                        result.AppendLine($"        params: [{string.Join(", ", method.Parameters.Select(p => $"{p.Type} {p.Name}"))}]");
                     }
                     else if (symbol is INamedTypeSymbol type)
                     {
                         if (type.BaseType != null && type.BaseType.SpecialType != SpecialType.System_Object)
                         {
-                            result.AppendLine($"    Base: {type.BaseType}");
+                            result.AppendLine($"        base: {type.BaseType}");
                         }
                         if (type.Interfaces.Any())
                         {
-                            result.AppendLine($"    Implements: {string.Join(", ", type.Interfaces.Take(3))}");
+                            result.AppendLine($"        interfaces: [{string.Join(", ", type.Interfaces.Take(3))}]");
                         }
                     }
                 }
-                result.AppendLine();
             }
 
             return result.ToString();
